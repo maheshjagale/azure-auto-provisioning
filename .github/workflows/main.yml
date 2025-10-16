@@ -1,1 +1,372 @@
+name: Azure Server Provisioning Pipeline
 
+# Trigger: When should this pipeline run?
+on:
+  # Manual trigger from GitHub UI
+  workflow_dispatch:
+    inputs:
+      action:
+        description: 'Action to perform'
+        required: true
+        default: 'apply'
+        type: choice
+        options:
+          - plan    # Preview changes
+          - apply   # Create infrastructure
+          - destroy # Delete infrastructure
+  
+  # Trigger on push to main branch
+  push:
+    branches:
+      - main
+    paths:
+      - 'inputs/server_request.json'  # Only when input file changes
+      - 'terraform/**'                 # Or Terraform files change
+
+# Environment variables available to all jobs
+env:
+  TERRAFORM_VERSION: '1.5.0'
+  PYTHON_VERSION: '3.9'
+  ARM_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+  ARM_CLIENT_SECRET: ${{ secrets.AZURE_CLIENT_SECRET }}
+  ARM_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+  ARM_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+
+jobs:
+  # ==========================================
+  # JOB 1: Parse User Input
+  # ==========================================
+  parse-input:
+    name: 📄 Parse User Input
+    runs-on: ubuntu-latest
+    
+    outputs:
+      parsed: ${{ steps.parse.outputs.success }}
+      environment: ${{ steps.extract.outputs.environment }}
+      vm_count: ${{ steps.extract.outputs.vm_count }}
+    
+    steps:
+      - name: 📥 Checkout Repository
+        uses: actions/checkout@v4
+      
+      - name: 🐍 Setup Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+      
+      - name: 📋 Parse Input File
+        id: parse
+        run: |
+          echo "Starting input parsing..."
+          python scripts/parse_input.py
+          
+          if [ $? -eq 0 ]; then
+            echo "success=true" >> $GITHUB_OUTPUT
+            echo "✅ Input parsing successful"
+          else
+            echo "success=false" >> $GITHUB_OUTPUT
+            echo "❌ Input parsing failed"
+            exit 1
+          fi
+      
+      - name: 📊 Extract Metadata
+        id: extract
+        run: |
+          # Extract key values for job summaries
+          ENV=$(jq -r '.environment' inputs/server_request.json)
+          VM_COUNT=$(jq -r '.vm_count' inputs/server_request.json)
+          
+          echo "environment=$ENV" >> $GITHUB_OUTPUT
+          echo "vm_count=$VM_COUNT" >> $GITHUB_OUTPUT
+          
+          echo "Environment: $ENV"
+          echo "VM Count: $VM_COUNT"
+      
+      - name: 📤 Upload Terraform Variables
+        uses: actions/upload-artifact@v3
+        with:
+          name: terraform-vars
+          path: terraform/terraform.tfvars
+          retention-days: 1
+
+  # ==========================================
+  # JOB 2: Design Architecture (Optional)
+  # ==========================================
+  design-architecture:
+    name: 🏗️ Design Architecture
+    runs-on: ubuntu-latest
+    needs: parse-input
+    
+    steps:
+      - name: 📥 Checkout Repository
+        uses: actions/checkout@v4
+      
+      - name: 📐 Generate Architecture Diagram
+        run: |
+          echo "🏗️ Architecture Design for ${{ needs.parse-input.outputs.environment }}"
+          echo "================================================"
+          echo "📦 Resource Group"
+          echo "  ├─ 🌐 Virtual Network (10.0.0.0/16)"
+          echo "  │   └─ 📡 Subnet (10.0.1.0/24)"
+          echo "  ├─ 🛡️ Network Security Group"
+          echo "  │   ├─ Allow SSH/RDP"
+          echo "  │   ├─ Allow HTTP (80)"
+          echo "  │   └─ Allow HTTPS (443)"
+          for i in $(seq 1 ${{ needs.parse-input.outputs.vm_count }}); do
+            echo "  ├─ 🖥️ Virtual Machine $i"
+            echo "  │   ├─ 🔌 Network Interface"
+            echo "  │   ├─ 🌍 Public IP"
+            echo "  │   └─ 💾 OS Disk"
+          done
+          echo "================================================"
+
+  # ==========================================
+  # JOB 3: Terraform Plan
+  # ==========================================
+  terraform-plan:
+    name: 📋 Terraform Plan
+    runs-on: ubuntu-latest
+    needs: [parse-input, design-architecture]
+    
+    steps:
+      - name: 📥 Checkout Repository
+        uses: actions/checkout@v4
+      
+      - name: 📥 Download Terraform Variables
+        uses: actions/download-artifact@v3
+        with:
+          name: terraform-vars
+          path: terraform/
+      
+      - name: ⚙️ Setup Terraform
+        uses: hashicorp/setup-terraform@v2
+        with:
+          terraform_version: ${{ env.TERRAFORM_VERSION }}
+      
+      - name: 🔧 Terraform Init
+        run: |
+          cd terraform
+          terraform init
+      
+      - name: ✅ Terraform Validate
+        run: |
+          cd terraform
+          terraform validate
+      
+      - name: 📊 Terraform Plan
+        id: plan
+        run: |
+          cd terraform
+          terraform plan -out=tfplan -no-color
+          
+          # Save plan for apply job
+          echo "Plan created successfully"
+      
+      - name: 📤 Upload Terraform Plan
+        uses: actions/upload-artifact@v3
+        with:
+          name: terraform-plan
+          path: terraform/tfplan
+          retention-days: 1
+
+  # ==========================================
+  # JOB 4: Terraform Apply (Provision)
+  # ==========================================
+  terraform-apply:
+    name: 🚀 Provision Infrastructure
+    runs-on: ubuntu-latest
+    needs: terraform-plan
+    if: github.event.inputs.action != 'plan'  # Skip if only planning
+    environment: 
+      name: production  # Requires approval in repo settings
+    
+    steps:
+      - name: 📥 Checkout Repository
+        uses: actions/checkout@v4
+      
+      - name: 📥 Download Terraform Variables
+        uses: actions/download-artifact@v3
+        with:
+          name: terraform-vars
+          path: terraform/
+      
+      - name: 📥 Download Terraform Plan
+        uses: actions/download-artifact@v3
+        with:
+          name: terraform-plan
+          path: terraform/
+      
+      - name: ⚙️ Setup Terraform
+        uses: hashicorp/setup-terraform@v2
+        with:
+          terraform_version: ${{ env.TERRAFORM_VERSION }}
+          terraform_wrapper: false  # Needed for output parsing
+      
+      - name: 🔧 Terraform Init
+        run: |
+          cd terraform
+          terraform init
+      
+      - name: 🚀 Terraform Apply
+        id: apply
+        run: |
+          cd terraform
+          
+          if [ "${{ github.event.inputs.action }}" == "destroy" ]; then
+            echo "🗑️ Destroying infrastructure..."
+            terraform destroy -auto-approve
+          else
+            echo "🚀 Applying infrastructure..."
+            terraform apply -auto-approve tfplan
+          fi
+      
+      - name: 📊 Capture Outputs
+        if: github.event.inputs.action != 'destroy'
+        id: outputs
+        run: |
+          cd terraform
+          
+          # Get outputs as JSON
+          terraform output -json > outputs.json
+          
+          # Extract key information
+          RESOURCE_GROUP=$(terraform output -raw resource_group_name)
+          VM_NAMES=$(terraform output -json vm_names)
+          PUBLIC_IPS=$(terraform output -json vm_public_ips)
+          
+          echo "resource_group=$RESOURCE_GROUP" >> $GITHUB_OUTPUT
+          
+          # Save outputs for validation job
+          echo "✅ Infrastructure provisioned successfully"
+      
+      - name: 📤 Upload Terraform Outputs
+        if: github.event.inputs.action != 'destroy'
+        uses: actions/upload-artifact@v3
+        with:
+          name: terraform-outputs
+          path: terraform/outputs.json
+          retention-days: 7
+
+  # ==========================================
+  # JOB 5: Validate Provisioning
+  # ==========================================
+  validate-provisioning:
+    name: ✅ Validate Infrastructure
+    runs-on: ubuntu-latest
+    needs: terraform-apply
+    if: github.event.inputs.action != 'destroy'
+    
+    steps:
+      - name: 📥 Checkout Repository
+        uses: actions/checkout@v4
+      
+      - name: 📥 Download Terraform Variables
+        uses: actions/download-artifact@v3
+        with:
+          name: terraform-vars
+          path: terraform/
+      
+      - name: 📥 Download Terraform Outputs
+        uses: actions/download-artifact@v3
+        with:
+          name: terraform-outputs
+          path: terraform/
+      
+      - name: ⚙️ Setup Terraform
+        uses: hashicorp/setup-terraform@v2
+        with:
+          terraform_version: ${{ env.TERRAFORM_VERSION }}
+          terraform_wrapper: false
+      
+      - name: 🐍 Setup Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+      
+      - name: 🔧 Terraform Init
+        run: |
+          cd terraform
+          terraform init
+      
+      - name: ✅ Run Validation
+        run: |
+          python scripts/validate.py
+      
+      - name: 📊 Generate Summary
+        run: |
+          echo "## 🎉 Provisioning Complete!" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### 📋 Infrastructure Details" >> $GITHUB_STEP_SUMMARY
+          
+          # Parse outputs and create summary
+          cd terraform
+          
+          RG=$(terraform output -raw resource_group_name)
+          echo "- **Resource Group:** \`$RG\`" >> $GITHUB_STEP_SUMMARY
+          
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### 🖥️ Virtual Machines" >> $GITHUB_STEP_SUMMARY
+          
+          VM_COUNT=$(terraform output -json vm_names | jq '. | length')
+          echo "- **Total VMs:** $VM_COUNT" >> $GITHUB_STEP_SUMMARY
+          
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### 🔐 Access Information" >> $GITHUB_STEP_SUMMARY
+          echo "Run \`terraform output admin_password\` to retrieve credentials" >> $GITHUB_STEP_SUMMARY
+
+  # ==========================================
+  # JOB 6: Log to GitHub (Issues/Comments)
+  # ==========================================
+  log-to-github:
+    name: 📝 Log Deployment
+    runs-on: ubuntu-latest
+    needs: validate-provisioning
+    if: github.event.inputs.action != 'destroy'
+    
+    steps:
+      - name: 📥 Checkout Repository
+        uses: actions/checkout@v4
+      
+      - name: 📥 Download Outputs
+        uses: actions/download-artifact@v3
+        with:
+          name: terraform-outputs
+          path: ./
+      
+      - name: 📝 Create Deployment Log Issue
+        uses: actions/github-script@v6
+        with:
+          script: |
+            const fs = require('fs');
+            const outputs = JSON.parse(fs.readFileSync('outputs.json', 'utf8'));
+            
+            const summary = outputs.provisioning_summary.value;
+            const vmNames = outputs.vm_names.value;
+            const publicIps = outputs.vm_public_ips.value;
+            
+            let body = `## 🚀 Deployment Log\n\n`;
+            body += `**Environment:** ${summary.environment}\n`;
+            body += `**Project:** ${summary.project_name}\n`;
+            body += `**Location:** ${summary.location}\n`;
+            body += `**VM Count:** ${summary.vm_count}\n`;
+            body += `**VM Size:** ${summary.vm_size}\n`;
+            body += `**OS Type:** ${summary.os_type}\n`;
+            body += `**Deployed:** ${summary.creation_time}\n\n`;
+            
+            body += `### 🖥️ Virtual Machines\n\n`;
+            vmNames.forEach((name, i) => {
+              body += `- **${name}** - Public IP: \`${publicIps[i]}\`\n`;
+            });
+            
+            body += `\n---\n`;
+            body += `*Workflow Run: ${context.payload.repository.html_url}/actions/runs/${context.runId}*`;
+            
+            await github.rest.issues.create({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              title: `✅ Deployment: ${summary.project_name}-${summary.environment} (${new Date().toISOString().split('T')[0]})`,
+              body: body,
+              labels: ['deployment', 'automated', summary.environment]
+            });
+            
+            console.log('✅ Deployment log created as GitHub issue');
