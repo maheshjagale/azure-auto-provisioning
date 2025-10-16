@@ -17,8 +17,8 @@ terraform {
   # Backend for storing Terraform state in Azure
   # This keeps track of what infrastructure exists
   backend "azurerm" {
-    resource_group_name  = "terraform-state-rg"
-    storage_account_name = "tfstate${random_string.storage_suffix.result}"
+    resource_group_name  = "azure-rg1"
+    storage_account_name = "maheshstorage29"
     container_name       = "tfstate"
     key                  = "terraform.tfstate"
   }
@@ -210,3 +210,4 @@ resource "azurerm_windows_virtual_machine" "main" {
   
   tags = azurerm_resource_group.main.tags
 }
+
