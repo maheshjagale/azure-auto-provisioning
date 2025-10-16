@@ -58,7 +58,8 @@ jobs:
         id: parse
         run: |
           echo "Starting input parsing..."
-          python scripts/parse_input.py
+          python azure-auto-provisioning/scripts/parse_input.py
+
           
           if [ $? -eq 0 ]; then
             echo "success=true" >> $GITHUB_OUTPUT
