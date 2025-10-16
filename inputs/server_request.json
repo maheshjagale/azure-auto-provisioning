@@ -2,7 +2,7 @@
   "environment": "production",
   "vm_count": 1,
   "vm_size": "Standard_B2s",
-  "location": "Central India",
+  "location": "centralindia",
   "os_type": "linux",
   "admin_username": "azureuser",
   "project_name": "azure-auto-provision",
@@ -10,4 +10,5 @@
     "Department": "Engineering"
   }
 }
+
 
