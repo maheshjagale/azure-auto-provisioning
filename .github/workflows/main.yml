@@ -133,7 +133,7 @@ jobs:
         uses: actions/checkout@v4
       
       - name: 📥 Download Terraform Variables
-        uses: actions/download-artifact@v3
+        uses: actions/download-artifact@v4
         with:
           name: terraform-vars
           path: terraform/
@@ -163,7 +163,7 @@ jobs:
           echo "Plan created successfully"
       
       - name: 📤 Upload Terraform Plan
-        uses: actions/upload-artifact@v3
+        uses: actions/upload-artifact@v4
         with:
           name: terraform-plan
           path: terraform/tfplan
@@ -185,13 +185,13 @@ jobs:
         uses: actions/checkout@v4
       
       - name: 📥 Download Terraform Variables
-        uses: actions/download-artifact@v3
+        uses: actions/download-artifact@v4
         with:
           name: terraform-vars
           path: terraform/
       
       - name: 📥 Download Terraform Plan
-        uses: actions/download-artifact@v3
+        uses: actions/download-artifact@v4
         with:
           name: terraform-plan
           path: terraform/
@@ -241,7 +241,7 @@ jobs:
       
       - name: 📤 Upload Terraform Outputs
         if: github.event.inputs.action != 'destroy'
-        uses: actions/upload-artifact@v3
+        uses: actions/upload-artifact@v4
         with:
           name: terraform-outputs
           path: terraform/outputs.json
@@ -261,13 +261,13 @@ jobs:
         uses: actions/checkout@v4
       
       - name: 📥 Download Terraform Variables
-        uses: actions/download-artifact@v3
+        uses: actions/download-artifact@v4
         with:
           name: terraform-vars
           path: terraform/
       
       - name: 📥 Download Terraform Outputs
-        uses: actions/download-artifact@v3
+        uses: actions/download-artifact@v4
         with:
           name: terraform-outputs
           path: terraform/
@@ -328,7 +328,7 @@ jobs:
         uses: actions/checkout@v4
       
       - name: 📥 Download Outputs
-        uses: actions/download-artifact@v3
+        uses: actions/download-artifact@v4
         with:
           name: terraform-outputs
           path: ./
